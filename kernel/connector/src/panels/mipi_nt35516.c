@@ -35,9 +35,23 @@
 static int nt35516_init(const struct panel_desc* desc)
 {
     /* clang-format off */
-    /* Sequence A: set GRAM window to last 4 columns (536–539) */
+    /*
+     * NT35516 DCS timing notes:
+     * - The datasheet requires the internal supplies/oscillator to settle
+     *   after Sleep Out before normal display operation. Use a conservative
+     *   120 ms delay here; the previous 10 ms delay could leave the panel
+     *   scanning before it was fully stable.
+     * - COLMOD defaults to 0x77 after reset, but set it explicitly so the
+     *   RGB/video path and GRAM writes agree on 24-bit pixels.
+     */
+    const k_u8 lcd_prepare_seq[] = {
+        0x05, 120, 1, 0x11,
+        0x15, 0, 2, 0x3A, 0x77,
+        0x05, 0, 1, 0x34,
+    };
+
+    /* Sequence A: set GRAM window to last 4 columns (536-539) */
     const k_u8 set_last4_cols[] = {
-        0x05, 10, 1, 0x11,
         /* Set column (x = 536 .. 539) */
         0x39, 0, 5, 0x2A, 0x02, 0x18, 0x02, 0x1B,
         /* Set page (y = 0 .. 959) */
@@ -46,30 +60,32 @@ static int nt35516_init(const struct panel_desc* desc)
         0x39, 0, 1, 0x2C,
     };
 
-    /* Sequence B: normal init, but active area = 0–535 */
+    /* Sequence B: normal init, but active area = 0-535 */
     const k_u8 lcd_init_seq[] = {
-        0x05, 10, 1, 0x11,
         /* Set column (x = 0 .. 535) */
         0x39, 0, 5, 0x2A, 0x00, 0x00, 0x02, 0x17,
         /* Set page (y = 0 .. 959) */
         0x39, 0, 5, 0x2B, 0x00, 0x00, 0x03, 0xBF,
-        /* Memory write */
-        0x05, 10, 1, 0x29,
+        /* Display on */
+        0x05, 20, 1, 0x29,
     };
     /* clang-format on */
 
     k_u8 black_data[4] = { 0x3C, 0x00, 0x00, 0x00 };
     int  i;
 
-    /* Step 1: prepare last 4 columns */
+    /* Step 1: bring the panel out of sleep and select a known pixel format. */
+    dsi_send_cmd_sequence(desc, lcd_prepare_seq, sizeof(lcd_prepare_seq), K_FALSE);
+
+    /* Step 2: prepare last 4 columns */
     dsi_send_cmd_sequence(desc, set_last4_cols, sizeof(set_last4_cols), K_FALSE);
 
-    /* Step 2: fill last 4 columns with black pixels (4 columns * 960 rows) */
+    /* Step 3: fill last 4 columns with black pixels (4 columns * 960 rows) */
     for (i = 0; i < (4 * 960); i++) {
         dwc_dsi_dcs_write(black_data, 4, desc->bus.dsi.vc_id);
     }
 
-    /* Step 3: run normal init with restricted active area */
+    /* Step 4: run normal init with restricted active area */
     dsi_send_cmd_sequence(desc, lcd_init_seq, sizeof(lcd_init_seq), K_FALSE);
 
     return 0;
@@ -88,7 +104,7 @@ static const struct panel_desc nt35516_panel_desc = {
     .bus_type = PANEL_BUS_DSI,
 
     .timing = {
-         .pclk_khz = 33000,
+         .pclk_khz = 40656,
          .hactive = 536,
          .hsync_len = 20,
          .hback_porch = 20,
